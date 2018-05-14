@@ -1,18 +1,13 @@
 import numpy as np
 import math
 import random as rand
-import string
 from collections import defaultdict
 
-data_path = "project_part_I/"
-letter_probs = np.genfromtxt(data_path + "letter_probabilities.csv", delimiter=",").tolist()
+data_path = "data/"
 state_matrix = np.genfromtxt(data_path + "letter_transition_matrix.csv", delimiter=",")
 
-
-
+state_matrix[state_matrix == 0] = 1e-20
 log_state_matrix = np.log(state_matrix)
-
-
 
 
 letters = 'abcdefghijklmnopqrstuvwxyz .'
@@ -25,64 +20,62 @@ num_to_letter = {}
 for index, char in enumerate(letters):
     num_to_letter[index] = char
 
-def build_cipher_matrix(ciphertext):
+def build_cipher_matrix(f, ciphertext):
+
+    message = convert_to_plain(f, ciphertext)
 
     N = 28
     def fixed_array():
         return [0]*N
     freq_dict = defaultdict(fixed_array)
-    total_len = len(ciphertext)
-    for index, char in enumerate(ciphertext):
-
-        if index < total_len - 1:
-            next = ciphertext[index+1]
-            index_next = letter_to_num[next]
-            freq_dict[char][index_next] += 1
-
+    total_len = len(message)
+    for index, char in enumerate(message):
+        if index > 0:
+            prev = message[index-1]
+            prev_index = letter_to_num[prev]
+            freq_dict[char][prev_index] += 1
 
     matrix = []
     for char in letters:
         char_array = [float(val) for val in freq_dict[char]]
-        char_sum = sum(char_array)
-        char_prob = [val/char_sum for val in char_array]
-
-        matrix.append(char_prob)
+        matrix.append(char_array)
 
     np_matrix = np.matrix(matrix)
     return np_matrix
 
+def random_neighbor(cipher_matrix, f):
+    rand_ind1 = np.random.randint(0, 26)
+    rand_ind2 = np.random.randint(0, 25)
+    if rand_ind2 >= rand_ind1:
+        rand_ind2 += 1
+
+    f_list = list(f)
+    f_list[rand_ind1], f_list[rand_ind2] = f[rand_ind2], f[rand_ind1]
+    f_p = "".join(f_list)
+    return swap(cipher_matrix, rand_ind1, rand_ind2), f_p
+
+
 def swap(cipher_matrix, a, b):
 
+    cipher_matrix_v2 = np.copy(cipher_matrix)
 
-    cipher_matrix[:,[a, b]] = cipher_matrix[:,[b, a]]
-    cipher_matrix[[a,b]] = cipher_matrix[[b,a]]
+    cipher_matrix_v2[:,[a, b]] = cipher_matrix_v2[:,[b, a]]
+    cipher_matrix_v2[[a,b]] = cipher_matrix_v2[[b,a]]
 
-    return cipher_matrix
-
-
-
+    return cipher_matrix_v2
 
 
-def compute_log_prob(y_number, inverse_function, target= -float('inf')):
-
-    current = letter_to_num[inverse_function[y_number[0]]]
-
-    log_prob = math.log(letter_probs[current])
-    for number in y_number[1:]:
-        previous = current
-        current = letter_to_num[inverse_function[number]]
-        if log_state_matrix[current, previous] == -float("inf"):
-            return -float('inf')
-        if log_prob - target < -10:
-            return log_prob
-        log_prob += log_state_matrix[current, previous]
-
-    return log_prob
+def compute_log_prob(log_state_matrix, observed_matrix):
 
 
-def swap_letter(f, inv_f):
-    rand_ind1 = np.random.randint(0, 28)
-    rand_ind2 = np.random.randint(0, 27)
+    mult_matrix = log_state_matrix * observed_matrix
+    result = np.sum(mult_matrix)
+    return result
+
+
+def swap_letter(f):
+    rand_ind1 = np.random.randint(0, 26)
+    rand_ind2 = np.random.randint(0, 25)
     if rand_ind2 >= rand_ind1:
         rand_ind2 += 1
 
@@ -90,11 +83,7 @@ def swap_letter(f, inv_f):
     f_list[rand_ind1], f_list[rand_ind2] = f[rand_ind2], f[rand_ind1]
     f_p = "".join(f_list)
 
-    inv_f_list = list(inv_f)
-    inv_f_list[letter_to_num[f[rand_ind1]]], inv_f_list[letter_to_num[f[rand_ind2]]] = inv_f[letter_to_num[f[rand_ind2]]], inv_f[letter_to_num[f[rand_ind1]]]
-    inv_f_p = "".join(inv_f_list)
-
-    return f_p, inv_f_p
+    return f_p
 
 
 def trim(val, min, max):
@@ -104,127 +93,146 @@ def trim(val, min, max):
 
 def find_period_whitespace(ciphertext):
 
-    frequency_dict = defaultdict(set)
+    def set_int():
+        return [set(), 0]
+
+    frequency_dict = defaultdict(set_int)
 
     total_len = len(ciphertext)
 
     for index, char in enumerate(ciphertext):
         if index < total_len - 1:
             next = ciphertext[index + 1]
-            frequency_dict[char].add(next)
+            frequency_dict[char][0].add(next)
+            frequency_dict[char][1] += 1
 
+    max_value = 0
+    period = ""
+    white = ""
     for key in frequency_dict:
-        if len(frequency_dict[key]) == 1:
-            print key
-            period = key
-            whitespace = frequency_dict[key].pop()
-            print whitespace
-            return period, whitespace
-    return False
+        if len(frequency_dict[key][0]) == 1:
 
-def is_valid_cipher_func(cipher_func, cipher_period, cipher_white):
+            if frequency_dict[key][1] > max_value:
+                max_value = frequency_dict[key][1]
+                period = key
+                white = frequency_dict[key][0].pop()
 
-    return cipher_func[-2:] == cipher_white + cipher_period
+    return period, white
 
+def random_initialize(f, cipher_period, cipher_white):
 
+    period_index = letter_to_num[cipher_period]
+    white_index = letter_to_num[cipher_white]
 
-def randomize_input(f, inverse_f):
+    list_f = list(f)
 
-    rand_min = 3
-    rand_max = 7
+    list_f[period_index], list_f[27] = list_f[27], list_f[period_index]
+    list_f[white_index], list_f[26] = list_f[26], list_f[white_index]
+
+    f_prime = "".join(list_f)
+
+    rand_min = 20
+    rand_max = 25
 
     rand_int = np.random.randint(rand_min, rand_max)
     count = 0
     while count < rand_int:
-        f, inverse_f = swap_letter(f, inverse_f)
+        f_prime  = swap_letter(f_prime)
         count += 1
-    return f, inverse_f
+    return f_prime
 
 
 def decode(ciphertext, output_file_name):
     #some preprocessing
+    new_line_indices = set()
 
-    cipher_period, cipher_white = find_period_whitespace(ciphertext)
-    print "Ending:", cipher_white + cipher_period
-    num_epoch = 10000
-    mix_time = 500
-    max_non_accepted = 2000
+    for index, char in enumerate(ciphertext):
+        if char == '\n':
+            new_line_indices.add(index)
 
-    #convert ciphertext to array of numbers
-    cipher_num = []
-    for char in ciphertext:
-        cipher_num.append(letter_to_num[char])
+    formatted_ciphertext  = ciphertext.replace("\n", "")
+    cipher_period, cipher_white = find_period_whitespace(formatted_ciphertext)
+    end = cipher_white + cipher_period
+
+
+    #hyperparameters
+    num_trial = 10
+    num_epoch = 20000
+    mix_time = 10000
+    max_non_accepted = 50000
 
 
     #MCMC
-
-    all_results = []
+    different_functions = []
     trial = 0
 
-    while trial < 10:
-        f, inverse_f = randomize_input(letters, letters)
+    while trial < num_trial:
+
+        print "Trial Number: ", trial + 1
+        f = random_initialize(letters, cipher_period, cipher_white)
+        cipher_matrix = build_cipher_matrix(f, formatted_ciphertext)
+
         i = 1
         count = 1
         distribution = defaultdict(int)
-        f_given_y = compute_log_prob(cipher_num, inverse_f)
-        non_accepted = 0
+
+        rejected = 0
+
         while count < num_epoch:
 
-            f_prime, inverse_f_prime = swap_letter(f, inverse_f)
-            f_given_y_prime = compute_log_prob(cipher_num, inverse_f_prime, f_given_y)
+            f_given_y = compute_log_prob(log_state_matrix, cipher_matrix)
+            cipher_matrix_cand, f_prime = random_neighbor(cipher_matrix, f)
+            f_given_y_prime = compute_log_prob(log_state_matrix, cipher_matrix_cand)
 
-            if f_given_y_prime == -float('inf'):
-                a = 0
-
-            if f_given_y == -float('inf'):
-                a = 1
-            else:
-                ratio = trim(f_given_y_prime - f_given_y, -50, 0)
-                a = min(1, math.exp(ratio))
+            ratio = trim(f_given_y_prime - f_given_y, -50, 0)
+            a = min(1, math.exp(ratio))
 
             u = rand.random()
             if u < a:
+                cipher_matrix = cipher_matrix_cand
                 f = f_prime
-                f_given_y = f_given_y_prime
-                inverse_f = inverse_f_prime
-
             else:
-                non_accepted += 1
+                rejected += 1
 
-
-            #if samples started getting rejected a lot
-            if non_accepted >= max_non_accepted:
+            #if too many samples are rejected
+            if rejected >= max_non_accepted:
+                print "This trial is rejected"
                 break
-
 
             i += 1
             if i >= mix_time:
                 distribution[f] += 1
                 count += 1
-            if count % 2000 == 0:
+            if count % 2500 == 0:
                 print "Currently at: ", count
 
+        #choose highest probability function
         max_value = max([(v, k) for k, v in distribution.iteritems()])
-        print "Current cipher func: ", max_value
         cipher_func = max_value[1]
-
-        if is_valid_cipher_func(cipher_func, cipher_period, cipher_white):
-            print "Potential Candidate Found"
-            all_results.append(cipher_func)
-            trial += 1
+        different_functions.append(cipher_func)
+        trial += 1
 
 
 
+    #choose most occuring ciphertext
     count_cipher = defaultdict(int)
-    for cipher in all_results:
+    for cipher in different_functions:
         count_cipher[cipher] += 1
 
     cipher_func = max([(v,k) for k, v in count_cipher.iteritems()])[1]
 
-    message = convert_to_plain(cipher_func, ciphertext)
+    message = convert_to_plain(cipher_func, formatted_ciphertext)
+
+    formatted_message = ""
+
+    for index, char in enumerate(message):
+        if index in new_line_indices:
+            formatted_message += '\n'
+        formatted_message += char
+
 
     f = open(output_file_name, "w")
-    f.write(message)
+    f.write(formatted_message)
     f.close()
     return cipher_func
 
@@ -253,15 +261,12 @@ def convert_to_plain(cipher_func, ciphertext):
     return result
 def generate_cipher_text(plain_text):
 
-
     cipher_func = generate_random_cipher_func()
-    print cipher_func
 
     convert_dict = {}
 
     for index, char in enumerate(cipher_func):
         convert_dict[num_to_letter[index]] = char
-
 
 
     output = ""
@@ -286,17 +291,11 @@ def calculate_accuracy(cipher_func, cipher_text, plain_text):
 
 #testing
 if __name__ == '__main__':
-    with open('project_part_II/plaintext_paradiselost.txt', 'r') as myfile:
-        test_plain= myfile.read().replace('\n', '')
-    print len(test_plain)
+
+    with open('data/plaintext_warandpeace.txt', 'r') as myfile:
+        test_plain= myfile.read().replace("\n", "")
+
     cipher_test = generate_cipher_text(test_plain)
-    #cipher_matrix = build_cipher_matrix(cipher_test)
-
-    #cipher_matrix = np.matrix([[0,1,0,0], [0, 0, 1, 0], [0,0,0,1],[0,0,0,0]])
-    #stuff = swap(cipher_matrix, 0 , 1)
-    #print stuff
-
     cipher_func = decode(cipher_test, "stuff.txt")
     print "Cipher Func", cipher_func
-
     calculate_accuracy(cipher_func, cipher_test, test_plain)
